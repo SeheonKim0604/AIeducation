@@ -39,18 +39,86 @@ def parse_pdf(file_bytes: bytes) -> list[str]:
 def parse_paste(raw_text: str) -> list[dict]:
     """
     붙여넣기 텍스트를 빈 줄 기준으로 블록 분리.
-    반환: [{"text": ..., "auto_checked": bool}, ...]
-    auto_checked는 요청형 어미로 끝나면 True (사용자가 수정 가능)
+    반환: [{"text": ..., "auto_checked": None}, ...]
+    auto_checked는 classify_blocks_with_gemini() 호출 후 채워짐.
     """
-    user_end_pattern = re.compile(
-        r"[?？]$|줘$|까$|나요$|세요$|해봐$|알려줘$|해줘$|주세요$|볼까$|할까$"
+    blocks = [b.strip() for b in re.split(r"\n{2,}", raw_text) if b.strip()]
+    return [{"text": block, "auto_checked": None} for block in blocks]
+
+
+def classify_blocks_with_gemini(blocks: list[dict], api_key: str) -> list[dict]:
+    """
+    Gemini API를 사용해 각 블록이 사용자 발화인지 AI 답변인지 분류.
+    반환: [{"text": ..., "auto_checked": bool}, ...]
+
+    Gemini는 이미 수백만 건의 대화 데이터로 학습되어 있으므로
+    문체·구조·어조만으로 역할을 정확하게 구분함.
+    """
+    import requests
+
+    GEMINI_MODEL = "gemini-3.1-flash-lite"
+
+    # 블록 번호와 미리보기를 JSON으로 전달
+    block_list = "\n".join(
+        f'[{i}] {b["text"][:120]}{"…" if len(b["text"]) > 120 else ""}'
+        for i, b in enumerate(blocks)
     )
 
-    blocks = [b.strip() for b in re.split(r"\n{2,}", raw_text) if b.strip()]
+    prompt = f"""You are analyzing a pasted chat conversation between a human user and an AI assistant (e.g. ChatGPT, Gemini, Claude).
+
+Below are text blocks extracted from the conversation (separated by blank lines).
+Each block is either written by the HUMAN USER or by the AI ASSISTANT.
+
+Classify each block by its index number.
+
+Human user characteristics:
+- Short, direct requests or questions
+- Conversational, informal tone possible
+- Asks for information, help, or tasks
+- May be incomplete sentences
+- Written in first person ("나", "저", "I", etc.)
+
+AI assistant characteristics:
+- Longer, structured explanations
+- Uses numbered lists, bullet points, headers
+- Polite, formal tone
+- Provides multiple options or detailed answers
+- Never asks for personal information
+
+BLOCKS:
+{block_list}
+
+OUTPUT RULES:
+- Output ONLY a JSON array of objects, nothing else.
+- Each object: {{"index": <number>, "role": "user" or "ai"}}
+- Example: [{{"index": 0, "role": "user"}}, {{"index": 1, "role": "ai"}}]"""
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={api_key}"
+    )
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": 1000, "temperature": 0.0},
+    }
+
+    resp = requests.post(url, json=payload, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    raw = data["candidates"][0]["content"]["parts"][0]["text"]
+
+    # JSON 파싱
+    cleaned = re.sub(r"```json|```", "", raw).strip()
+    classifications = json.loads(cleaned)
+
+    # 분류 결과를 블록에 반영
+    role_map = {item["index"]: item["role"] for item in classifications}
     result = []
-    for block in blocks:
-        last_line = [l.strip() for l in block.splitlines() if l.strip()]
-        last_line = last_line[-1] if last_line else ""
-        auto_checked = bool(user_end_pattern.search(last_line))
-        result.append({"text": block, "auto_checked": auto_checked})
+    for i, block in enumerate(blocks):
+        role = role_map.get(i, "unknown")
+        result.append({
+            "text": block["text"],
+            "auto_checked": (role == "user"),
+            "role": role,
+        })
     return result
