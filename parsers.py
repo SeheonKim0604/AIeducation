@@ -49,16 +49,12 @@ def parse_paste(raw_text: str) -> list[dict]:
 def classify_blocks_with_gemini(blocks: list[dict], api_key: str) -> list[dict]:
     """
     Gemini API를 사용해 각 블록이 사용자 발화인지 AI 답변인지 분류.
-    반환: [{"text": ..., "auto_checked": bool}, ...]
-
-    Gemini는 이미 수백만 건의 대화 데이터로 학습되어 있으므로
-    문체·구조·어조만으로 역할을 정확하게 구분함.
+    반환: [{"text": ..., "auto_checked": bool, "role": str}, ...]
     """
     import requests
 
     GEMINI_MODEL = "gemini-3.1-flash-lite"
 
-    # 블록 번호와 미리보기를 JSON으로 전달
     block_list = "\n".join(
         f'[{i}] {b["text"][:120]}{"…" if len(b["text"]) > 120 else ""}'
         for i, b in enumerate(blocks)
@@ -76,22 +72,21 @@ Human user characteristics:
 - Conversational, informal tone possible
 - Asks for information, help, or tasks
 - May be incomplete sentences
-- Written in first person ("나", "저", "I", etc.)
+- Written in first person
 
 AI assistant characteristics:
 - Longer, structured explanations
 - Uses numbered lists, bullet points, headers
 - Polite, formal tone
 - Provides multiple options or detailed answers
-- Never asks for personal information
 
-BLOCKS:
+BLOCKS TO CLASSIFY:
 {block_list}
 
-OUTPUT RULES:
-- Output ONLY a JSON array of objects, nothing else.
-- Each object: {{"index": <number>, "role": "user" or "ai"}}
-- Example: [{{"index": 0, "role": "user"}}, {{"index": 1, "role": "ai"}}]"""
+STRICT OUTPUT RULES:
+- Output ONLY a raw JSON array. No markdown. No explanation. No extra text before or after.
+- Every block index from 0 to {len(blocks)-1} must appear exactly once.
+- Format: [{{"index": 0, "role": "user"}}, {{"index": 1, "role": "ai"}}, ...]"""
 
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -99,20 +94,27 @@ OUTPUT RULES:
     )
     payload = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": 1000, "temperature": 0.0},
+        "generationConfig": {
+            "maxOutputTokens": max(512, len(blocks) * 30),
+            "temperature": 0.0,
+        },
     }
 
     resp = requests.post(url, json=payload, timeout=30)
     resp.raise_for_status()
     data = resp.json()
-    raw = data["candidates"][0]["content"]["parts"][0]["text"]
+    raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
-    # JSON 파싱
-    cleaned = re.sub(r"```json|```", "", raw).strip()
-    classifications = json.loads(cleaned)
+    # JSON 배열만 추출 (앞뒤 텍스트, 마크다운 펜스 모두 제거)
+    raw = re.sub(r"```json|```", "", raw).strip()
+    match = re.search(r"\[.*\]", raw, re.DOTALL)
+    if not match:
+        raise ValueError(f"JSON 배열을 찾을 수 없어요. Gemini 응답:\n{raw[:300]}")
+    classifications = json.loads(match.group())
 
-    # 분류 결과를 블록에 반영
     role_map = {item["index"]: item["role"] for item in classifications}
+
+    # 혹시 누락된 인덱스가 있으면 fallback으로 "unknown" 처리
     result = []
     for i, block in enumerate(blocks):
         role = role_map.get(i, "unknown")
