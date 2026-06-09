@@ -2,7 +2,7 @@ import streamlit as st
 import json
 import re
 
-from parsers import parse_json, parse_pdf, parse_paste
+from parsers import parse_json, parse_pdf, parse_paste, classify_blocks_with_gemini
 from analyzer import analyze, chat_reply
 
 # ════════════════════════════════════════
@@ -352,18 +352,32 @@ with left:
             label_visibility="collapsed"
         )
         if st.button("블록 나누기 →", key="parse_paste"):
-            if paste_text.strip():
-                blocks = parse_paste(paste_text)
-                st.session_state.paste_blocks = blocks
-            else:
+            if not paste_text.strip():
                 st.warning("내용을 먼저 붙여넣어 주세요.")
+            elif not api_key:
+                st.warning("API 키를 먼저 입력해야 분류할 수 있어요.")
+            else:
+                raw_blocks = parse_paste(paste_text)
+                if not raw_blocks:
+                    st.warning("블록을 인식하지 못했어요. 내용을 확인해주세요.")
+                else:
+                    with st.spinner(f"Gemini가 {len(raw_blocks)}개 블록을 분석 중..."):
+                        try:
+                            classified = classify_blocks_with_gemini(raw_blocks, api_key)
+                            st.session_state.paste_blocks = classified
+                            user_count = sum(1 for b in classified if b["auto_checked"])
+                            st.success(f"✓ 분류 완료 — 사용자 발화 {user_count}개 / AI 답변 {len(classified) - user_count}개 감지됨")
+                        except Exception as e:
+                            st.error(f"분류 실패: {e}")
 
         if st.session_state.paste_blocks:
-            st.markdown(f"**{len(st.session_state.paste_blocks)}개 블록 — 사용자님의 질문만 체크해주세요**")
+            st.markdown(f"**{len(st.session_state.paste_blocks)}개 블록 — 잘못 분류된 항목은 직접 수정해주세요**")
             selected = []
             for i, block in enumerate(st.session_state.paste_blocks):
                 preview = block["text"][:80] + ("…" if len(block["text"]) > 80 else "")
-                checked = st.checkbox(preview, value=block["auto_checked"], key=f"paste_cb_{i}")
+                role_badge = "🙋 사용자" if block.get("auto_checked") else "🤖 AI"
+                label = f"{role_badge} | {preview}"
+                checked = st.checkbox(label, value=block["auto_checked"], key=f"paste_cb_{i}")
                 if checked:
                     selected.append(block["text"])
 
