@@ -222,6 +222,10 @@ def render_report(report: dict):
     <div style='font-family:monospace;font-size:10px;font-weight:700;letter-spacing:.08em;
                 text-transform:uppercase;color:#888480;margin-bottom:6px'>확장된 구성주의 모델 분류</div>
     <div class='al-model-tag'>⬢ {u.get('dominant_model','')}</div>
+    <div style='font-size:13px;line-height:1.8;color:#3a3835;
+                background:#f0f4fb;border:1px solid #c5d8f0;
+                padding:12px 16px;margin:8px 0;border-radius:4px'>
+      📖 <strong>이 분류가 무엇인가요?</strong><br>{u.get('model_explanation','')}</div>
     <div style='font-size:12px;color:#888480;line-height:1.7;margin-bottom:10px'>{u.get('model_reason','')}</div>
     <div class='al-insight' style='border-color:#c8960c;background:#fdf6e3'>{u.get('analysis_text','')}</div>
     """, unsafe_allow_html=True)
