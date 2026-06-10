@@ -97,6 +97,8 @@ if "report" not in st.session_state:
     st.session_state.report = None
 if "paste_blocks" not in st.session_state:
     st.session_state.paste_blocks = []
+if "pdf_blocks" not in st.session_state:
+    st.session_state.pdf_blocks = []
 
 
 # ════════════════════════════════════════
@@ -333,18 +335,53 @@ with left:
 
     # ── PDF 탭
     with tab_pdf:
-        pdf_files = st.file_uploader("PDF 파일 업로드", type=["pdf"], accept_multiple_files=True, key="pdf_upload")
-        if pdf_files:
-            all_lines = []
-            for f in pdf_files:
-                try:
-                    lines = parse_pdf(f.read())
-                    all_lines.extend(lines)
-                    st.write(f"📄 {f.name}: {len(lines)}줄")
-                except Exception as e:
-                    st.warning(f"{f.name}: {e}")
-            st.session_state.prompts = all_lines
-            st.success(f"✓ 총 {len(all_lines)}개 텍스트 블록 추출 완료")
+        pdf_files = st.file_uploader(
+            "PDF 파일 업로드", type=["pdf"],
+            accept_multiple_files=True, key="pdf_upload"
+        )
+        if st.button("블록 나누기 →", key="parse_pdf_btn"):
+            if not pdf_files:
+                st.warning("파일을 먼저 업로드해주세요.")
+            elif not api_key:
+                st.warning("API 키를 먼저 입력해야 분류할 수 있어요.")
+            else:
+                all_blocks = []
+                for f in pdf_files:
+                    try:
+                        blocks = parse_pdf(f.read())
+                        all_blocks.extend(blocks)
+                        st.write(f"📄 {f.name}: {len(blocks)}개 블록 추출")
+                    except Exception as e:
+                        st.warning(f"{f.name} 추출 실패: {e}")
+
+                if all_blocks:
+                    with st.spinner(f"Gemini가 {len(all_blocks)}개 블록을 분석 중..."):
+                        try:
+                            classified = classify_blocks_with_gemini(all_blocks, api_key)
+                            st.session_state.pdf_blocks = classified
+                            user_count = sum(1 for b in classified if b["auto_checked"])
+                            st.success(f"✓ 분류 완료 — 사용자 질문 {user_count}개 / AI 답변 {len(classified) - user_count}개 감지됨")
+                        except Exception as e:
+                            st.error(f"분류 실패: {e}")
+
+        if st.session_state.get("pdf_blocks"):
+            st.markdown(f"**{len(st.session_state.pdf_blocks)}개 블록 — 잘못 분류된 항목은 직접 수정해주세요**")
+            selected = []
+            for i, block in enumerate(st.session_state.pdf_blocks):
+                preview = block["text"][:80] + ("…" if len(block["text"]) > 80 else "")
+                role_badge = "🙋 사용자" if block.get("auto_checked") else "🤖 AI"
+                label = f"{role_badge} | {preview}"
+                checked = st.checkbox(label, value=block["auto_checked"], key=f"pdf_cb_{i}")
+                if checked:
+                    selected.append(block["text"])
+
+            if st.button("선택 완료", key="confirm_pdf"):
+                if selected:
+                    st.session_state.prompts = selected
+                    st.success(f"✅ {len(selected)}개 프롬프트 수집 완료")
+                else:
+                    st.warning("하나 이상 선택해주세요.")
+
         st.caption("학습자 대화 내역 PDF. 여러 파일 동시 선택 가능.")
 
     # ── 붙여넣기 탭
@@ -452,6 +489,7 @@ with left:
         st.session_state.chat_history = []
         st.session_state.report = None
         st.session_state.paste_blocks = []
+        st.session_state.pdf_blocks = []
         st.rerun()
 
 # ════════════════════════════════════════
