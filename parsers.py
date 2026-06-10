@@ -24,20 +24,20 @@ def parse_json(file_bytes: bytes) -> list[str]:
 
 def parse_pdf(file_bytes: bytes) -> list[dict]:
     """
-    PDF에서 텍스트를 추출하고 빈 줄 기준으로 블록 분리.
+    PDF에서 줄 단위로 텍스트 추출.
     반환: [{"text": ..., "auto_checked": None}, ...]
     classify_blocks_with_gemini() 호출 후 사용자/AI 구분됨.
     """
     import fitz  # pymupdf
 
     doc = fitz.open(stream=file_bytes, filetype="pdf")
-    full_text = ""
+    lines = []
     for page in doc:
-        full_text += page.get_text() + "\n\n"
-
-    # 빈 줄 기준으로 블록 분리 (20자 미만 블록 제거)
-    blocks = [b.strip() for b in re.split(r"\n{2,}", full_text) if len(b.strip()) >= 20]
-    return [{"text": block, "auto_checked": None} for block in blocks]
+        for line in page.get_text().splitlines():
+            line = line.strip()
+            if len(line) >= 10:   # 너무 짧은 줄(페이지번호, 헤더 등) 제거
+                lines.append({"text": line, "auto_checked": None})
+    return lines
 
 
 def parse_paste(raw_text: str) -> list[dict]:
