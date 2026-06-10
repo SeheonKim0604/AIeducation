@@ -22,18 +22,22 @@ def parse_json(file_bytes: bytes) -> list[str]:
     return prompts
 
 
-def parse_pdf(file_bytes: bytes) -> list[str]:
-    """PDF에서 텍스트 줄 추출 (20자 이상만)"""
+def parse_pdf(file_bytes: bytes) -> list[dict]:
+    """
+    PDF에서 텍스트를 추출하고 빈 줄 기준으로 블록 분리.
+    반환: [{"text": ..., "auto_checked": None}, ...]
+    classify_blocks_with_gemini() 호출 후 사용자/AI 구분됨.
+    """
     import fitz  # pymupdf
+
     doc = fitz.open(stream=file_bytes, filetype="pdf")
-    lines = []
+    full_text = ""
     for page in doc:
-        text = page.get_text()
-        for line in text.splitlines():
-            line = line.strip()
-            if len(line) >= 20:
-                lines.append(line)
-    return lines
+        full_text += page.get_text() + "\n\n"
+
+    # 빈 줄 기준으로 블록 분리 (20자 미만 블록 제거)
+    blocks = [b.strip() for b in re.split(r"\n{2,}", full_text) if len(b.strip()) >= 20]
+    return [{"text": block, "auto_checked": None} for block in blocks]
 
 
 def parse_paste(raw_text: str) -> list[dict]:
